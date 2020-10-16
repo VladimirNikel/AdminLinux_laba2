@@ -13,6 +13,8 @@ set -eo pipefail
 main_function(){
 	temp=/tmp/log_analyser_dates.tmp
 	current_data=$(date "+%d/%b/%Y:%T")
+	current_data_sec=$(date +%s)
+	my_str="ЗАПИСИ ОБРАБОТАНЫ "$current_data
 
 	#Выводим текущую дату
 	echo "Текущая дата: $current_data"
@@ -20,78 +22,79 @@ main_function(){
 	# Проверяем, запускался ли скрипт до этого момента. Если да, то получаем дату последнего запуска
 	if [ -f $temp ]
 	then
-		last_data=$(cat $temp | tail -n 1)
+		last_data_sec=$(cat $temp | tail -n 1)
+		last_data=$(date --date=@$last_data_sec "+%d/%b/%Y:%T")
 		echo "Прошлая дата анализа: $last_data"
 	fi
 
 	# Считаем количество новых записей в логе
 	echo "Начат подсчет новых записей"
-	new_records_count=$(cat $1 | cut -d ' ' -f 4 | tail -n100|
-	awk -v dt=$last_data '{ cmd="date \"+[%d/%b/%Y:%T +0000]\""; cmd | getline var; $1=var ; if (var > dt) { print } else { exit 0 } ; close(cmd); } ' |
-	wc -l)
-
-	# Проверяем, сколько появилось новых записей
-	if [ $new_records_count -eq 0 ]
+	#date "+%s" --date="$(tail -n1 nginx_logs | awk -F "[" {'print $2'} | awk {'print $1'} | sed "s/\//\ /g" | sed "s/:/ /" )"
+	new_records_count=$( tac $1 | awk '{  if ( $1=="ЗАПИСИ" && $2=="ОБРАБОТАНЫ" ) exit 0 ; else print }' | wc -l || true )
+	#echo "$(tac $1 | awk '{ if ( $1=="ЗАПИСИ" && $2=="ОБРАБОТАНЫ" ) { exit 0 } else { print } }' | wc -l)"
+	
+	if [ $new_records_count -le 0 ]
 	then
 		echo "Нет новых записей в $1 с $last_data"
-		echo $current_data >> $temp
+		echo $current_data_sec >> $temp
 		exit 0
 	fi
-
+	#let new_records_count--
 	echo "Количество новых записей в log-файле: $new_records_count"
+	echo $my_str >> $1
 
-	start_time_rande=$(cat $1  | cut -d ' ' -f 4 | tail -n $new_records_count | sort -n | head -n1 | awk -F"[" '{print $2}')
-	finish_time_rande=$(cat $1  | cut -d ' ' -f 4 | tail -n $new_records_count | sort -nr | head -n1 | awk -F"[" '{print $2}')
+	start_time_rande=$(cat $1 | head --line -1 | cut -d ' ' -f 4 | tail -n $new_records_count | sort -n | head -n1 | awk -F"[" '{print $2}' || true)
+	finish_time_rande=$(cat $1 | head --line -1 | cut -d ' ' -f 4 | tail -n $new_records_count | sort -nr | head -n1 | awk -F"[" '{print $2}' || true)
 	echo -e "Обрабатываемый диапазон: $start_time_rande - $finish_time_rande"
 
 	echo -e "\nТоп-15 IP-адресов, с которых посещался сайт\n"
 	cat $1 |
-	tail -n100 |
-	head -n $new_records_count |
+	head --line -1 |
+	tail -n $new_records_count |
 	cut -d ' ' -f 1 |
 	sort |
 	uniq -c |
 	sort -nr |
 	head -n 15 |
-	awk ' { t = $1; $1 = $2; $2 = t; print $1,"\t\t",$2; } '
+	awk '{ t = $1; $1 = $2; $2 = t; print $1,"\t\t",$2; }' || true
 
 	echo -e "\nТоп-15 ресурсов сайта, которые запрашивались клиентами\n"
 	cat $1 |
-	tail -n100 |
-	head -n $new_records_count |
+	head --line -1 |
+	tail -n $new_records_count |
 	cut -d ' ' -f 7 |
 	sort |
 	uniq -c |
 	sort -nr |
 	head -n 15 |
-	awk ' { t = $1; $1 = $2; $2 = t; print $1,"\t",$2; } '
+	awk '{ t = $1; $1 = $2; $2 = t; print $1,"\t",$2; }' || true
 
 	echo -e "\nСписок всех кодов возврата\n"
 	cat $1 |
-	tail -n100 |
-	head -n $new_records_count |
+	head --line -1 |
+	tail -n $new_records_count |
 	cut -d ' ' -f 9 |
 	sort |
 	sed 's/[^0-9]*//g' |
 	awk -F '=' '$1 > 100 {print $1}' |
 	uniq -c  |
 	head -n 15 |
-	awk ' { t = $1; $1 = $2; $2 = t; print $1,"\t\t\t",$2; } '
+	awk '{ t = $1; $1 = $2; $2 = t; print $1,"\t\t\t",$2; }'|| true
 
 	echo -e "\nСписок кодов возврата 4xx и 5xx (только ошибки)\n"
 	cat $1 |
-	tail -n100 |
-	head -n $new_records_count |
+	head --line -1 |
+	tail -n $new_records_count |
 	cut -d ' ' -f 9 |
 	sort |
 	sed 's/[^0-9]*//g' |
 	awk -F '=' '$1 > 400 {print $1}' |
 	uniq -c  |
 	head -n 15 |
-	awk ' { t = $1; $1 = $2; $2 = t; print $1,"\t\t\t",$2; } '
+	awk '{ t = $1; $1 = $2; $2 = t; print $1,"\t\t\t",$2; }'|| true
 
 	# Записываем дату последнего запуска скрипта
-	echo $current_data >> $temp
+	echo $current_data_sec >> $temp
 }
 
 
